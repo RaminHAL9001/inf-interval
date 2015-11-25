@@ -1,4 +1,4 @@
--- "Numeric/Interval/Interval.hs"  defines the Interval data type used to denote a possibly
+-- "Dao/EnumSet.hs"  defines the Interval data type used to denote a possibly
 -- whole subset of contiguous elements of an Enum data type.
 -- 
 -- Copyright (C) 2008-2015  Ramin Honary.
@@ -17,32 +17,29 @@
 -- this program (see the file called "LICENSE"). If not, see the URL:
 -- <http://www.gnu.org/licenses/agpl.html>.
 
--- | This package is intended to be imported qualified, so many of the names of APIs provided will
--- conflict with the "Data.Set" module in the @containers@ package.
-module Numeric.Interval.Infinite
+module Dao.Interval
   ( -- * The 'Inf' data type
-    Inf(..),
+    Inf(NegInf, PosInf, Finite),
     stepDown, stepUp, toFinite, enumIsInf,
-    InfBound(..),
+    InfBound, minBoundInf, maxBoundInf,
     -- * the 'Interval' data type
     Interval, startPoint, endPoint, toPair, fromPair, interval, point, wholeInterval,
     negInfTo, toPosInf, toBounded, toBoundedPair, enumBoundedPair,
     intervalMember, singular, plural, canonicalInterval, intervalNub,
     intervalInvert, intervalUnion, intervalIntersect, intervalDelete, intervalExclusion,
     areIntersecting, areConsecutive,
-    SubBounded(..),
+    SubBounded(subBounds),
     -- * Predicates on 'Interval's
     envelop, intervalSpanAll, intLength, enumLength, intervalIntSize,
     intervalEnumSize, isWithin, intervalHasEnumInf, intervalIsInfinite,
-    -- * The 'Set' data type
-    Set, Numeric.Interval.Infinite.empty, whole, fromList, fromPairs, fromPoints, range, singleton,
-    Numeric.Interval.Infinite.map, toList, intSize, enumSize, cardinality, elems, member,
-    Numeric.Interval.Infinite.null, isWhole, isSingleton,
+    -- * The 'Set' non-monadic data type
+    Set, Dao.Interval.empty, whole, fromList, fromPairs, fromPoints, range, singleton, toList,
+    intSize, enumSize, cardinality, elems, member, Dao.Interval.null, isWhole, isSingleton,
     -- * Set Operators for non-monadic 'Set's
-    Numeric.Interval.Infinite.invert, exclusive,
-    Numeric.Interval.Infinite.union, Numeric.Interval.Infinite.unions,
-    Numeric.Interval.Infinite.intersections, Numeric.Interval.Infinite.intersect,
-    Numeric.Interval.Infinite.delete,
+    Dao.Interval.invert, exclusive,
+    Dao.Interval.union, Dao.Interval.unions,
+    Dao.Interval.intersections, Dao.Interval.intersect,
+    Dao.Interval.delete,
     -- * Miscelaneous
     innerProduct
   )
@@ -50,12 +47,10 @@ module Numeric.Interval.Infinite
 
 import           Data.Array.IArray (Array, Ix, bounds)
 import           Data.Char
-import           Data.Function (fix)
 import           Data.Monoid
 import           Data.List
 import           Data.Ratio
 import           Data.Typeable
-import qualified Data.Vector as Vec
 
 import           Control.Arrow
 import           Control.Monad
@@ -69,18 +64,18 @@ class InfBound c where
   minBoundInf :: Inf c
   maxBoundInf :: Inf c
 
-instance InfBound ()       where { minBoundInf = Finite (); maxBoundInf = Finite (); }
-instance InfBound Int      where { minBoundInf = Finite minBound; maxBoundInf = Finite maxBound; }
-instance InfBound Char     where { minBoundInf = Finite minBound; maxBoundInf = Finite maxBound; }
-instance InfBound Integer  where { minBoundInf = NegInf; maxBoundInf = PosInf; }
-instance InfBound Rational where { minBoundInf = NegInf; maxBoundInf = PosInf; }
-instance InfBound Float    where { minBoundInf = NegInf; maxBoundInf = PosInf; }
-instance InfBound Double   where { minBoundInf = NegInf; maxBoundInf = PosInf; }
+instance InfBound ()              where { minBoundInf = Finite (); maxBoundInf = Finite (); }
+instance InfBound Int             where { minBoundInf = Finite minBound; maxBoundInf = Finite maxBound; }
+instance InfBound Char            where { minBoundInf = Finite minBound; maxBoundInf = Finite maxBound; }
+instance InfBound Integer         where { minBoundInf = NegInf; maxBoundInf = PosInf; }
+instance InfBound (Ratio Integer) where { minBoundInf = NegInf; maxBoundInf = PosInf; }
+instance InfBound Float           where { minBoundInf = NegInf; maxBoundInf = PosInf; }
+instance InfBound Double          where { minBoundInf = NegInf; maxBoundInf = PosInf; }
 
 ----------------------------------------------------------------------------------------------------
 
 _paren :: Show o => o -> String
-_paren o = let cx = show o in if or $ isSpace <$> cx then "("++cx++")" else cx
+_paren o = let cx = show o in if or (fmap isSpace cx) then "("++cx++")" else cx
 
 ----------------------------------------------------------------------------------------------------
 
@@ -99,9 +94,9 @@ instance (Ord i, Ix i, InfBound i) => SubBounded (i, i) i where { subBounds = un
 
 -- | Enumerable elements with the possibility of infinity.
 data Inf c
-  = NegInf    -- ^ negative infinity
-  | PosInf    -- ^ positive infinity
-  | Finite !c -- ^ a single point
+  = NegInf  -- ^ negative infinity
+  | PosInf  -- ^ positive infinity
+  | Finite c -- ^ a single point
   deriving (Eq, Show, Read, Typeable)
 
 instance Functor Inf where
@@ -110,7 +105,8 @@ instance Functor Inf where
     PosInf   -> PosInf
     Finite c -> Finite $ f c
 
-instance NFData a => NFData (Inf a) where
+instance NFData a =>
+  NFData (Inf a) where
     rnf  NegInf    = ()
     rnf  PosInf    = ()
     rnf (Finite c) = deepseq c ()
@@ -169,8 +165,8 @@ toFinite c = case c of
 -- | This is a data type specifying an inclusive interval between exactly two points (which may be
 -- the same point). This is the building block of an 'Interval' 'Set'.
 data Interval c
-  = Single   { startPoint :: !(Inf c) }
-  | Interval { startPoint :: !(Inf c), endPoint :: !(Inf c) }
+  = Single   { startPoint :: Inf c }
+  | Interval { startPoint :: Inf c, endPoint :: Inf c }
   deriving (Eq, Typeable)
 
 instance Functor Interval where
@@ -213,7 +209,8 @@ instance (Eq c, Ord c, InfBound c, Read c) => Read (Interval c) where
         return (interval a b, str)
       _                      -> []
 
-instance NFData a => NFData (Interval a) where
+instance NFData a =>
+  NFData (Interval a) where
     rnf (Single   a  ) = deepseq a ()
     rnf (Interval a b) = deepseq a $! deepseq b ()
 
@@ -449,8 +446,11 @@ areConsecutive loA loB = case loA of
       | otherwise -> consec hiB lo
   where { consec loA loB = stepUp loA == loB || loA == stepDown loB }
 
-_intervalUnion :: (Ord c, Enum c, InfBound c) => Interval c -> Interval c -> Set_ List c
-_intervalUnion a b
+-- | Performs a set union on two 'Interval's of elements to create a new _interval. If the elements of
+-- the new _interval are not contiguous, each _interval is returned separately and unchanged. The first
+-- item in the pair of items returned is 'Prelude.True' if any of the items were modified.
+intervalUnion :: (Ord c, Enum c, InfBound c) => Interval c -> Interval c -> Set c
+intervalUnion a b
   | areIntersecting a b = case a of
       Single  _     -> _fromList $ return $ case b of
         Single   _       -> a
@@ -467,14 +467,10 @@ _intervalUnion a b
         Interval loB hiB -> _interval (min lo loB) (max hi hiB)
   | otherwise = _fromList $ if a<=b then [a, b] else [b, a]
 
--- | Performs a set union on two 'Interval's of elements to create a new _interval. If the elements of
--- the new _interval are not contiguous, each _interval is returned separately and unchanged. The first
--- item in the pair of items returned is 'Prelude.True' if any of the items were modified.
-intervalUnion :: (Ord c, Enum c, InfBound c) => Interval c -> Interval c -> Set c
-intervalUnion a = _set . _intervalUnion a
-
-_intervalIntersect :: (Ord c, Enum c, InfBound c) => Interval c -> Interval c -> Set_ List c
-_intervalIntersect a b = if not (areIntersecting a b) then EmptySet else Set_ $ List . return $ case a of
+-- | Performs a set intersection on two 'Interval's of elements to create a new _interval. If the
+-- elements of the new _interval are not contiguous, this function evaluates to an empty list.
+intervalIntersect :: (Ord c, Enum c, InfBound c) => Interval c -> Interval c -> Set c
+intervalIntersect a b = if not (areIntersecting a b) then EmptySet else Set $ return $ case a of
   Single   loA  -> case b of
     Single   loA -> Single loA
     Interval _  _ -> Single loA
@@ -482,33 +478,11 @@ _intervalIntersect a b = if not (areIntersecting a b) then EmptySet else Set_ $ 
     Single   loA    -> Single loA
     Interval loB hiB -> _interval (max loA loB) (min hiA hiB)
 
--- | Performs a set intersection on two 'Interval's of elements to create a new _interval. If the
--- elements of the new _interval are not contiguous, this function evaluates to an empty list.
-intervalIntersect :: (Ord c, Enum c, InfBound c) => Interval c -> Interval c -> Set c
-intervalIntersect a = _set . _intervalIntersect a
-
-_intervalDelete :: (Ord c, Enum c, InfBound c) => Interval c -> Interval c -> Set_ List c
-_intervalDelete a b = if not (areIntersecting a b) then Set_ $ List [a] else Set_ $ List $ case a of
-  Single  _   -> case b of
-    Single  _     -> []
-    Interval _  _  -> []
-  Interval loA hiA -> case b of
-    Single   loB
-      | loA==loB  -> [_interval (stepUp loA)  hiA ]
-      | hiA==loB  -> [_interval loA (stepDown hiA)]
-      | otherwise -> [_interval loA (stepDown loB), _interval (stepUp loB) hiA]
-    Interval loB hiB
-      | loB >  loA && hiB <  hiA -> [_interval loA (stepDown loB), _interval (stepUp hiB) hiA]
-      | loB <= loA && hiB >= hiA -> []
-      | loB <= loA && hiB <  hiA -> [_interval (stepUp hiB) hiA]
-      | loB >  loA && hiB >= hiA -> [_interval loA (stepDown loB)]
-      | otherwise                -> error "intervalDelete"
-
 -- | Performs a set "delete" operation, deleteing any elements selected by the first _interval if
 -- they are contained in the second _interval. This operation is not associative, i.e.
 -- @'intervalDelete' a b /= 'intervalDelete' b a@.
 intervalDelete :: (Ord c, Enum c, InfBound c) => Interval c -> Interval c -> Set c
-intervalDelete a b = _set $ if not (areIntersecting a b) then Set_ $ List [a] else Set_ $ List $ case a of
+intervalDelete a b = if not (areIntersecting a b) then Set [a] else Set $ case a of
   Single  _   -> case b of
     Single  _     -> []
     Interval _  _  -> []
@@ -528,11 +502,11 @@ intervalDelete a b = _set $ if not (areIntersecting a b) then Set_ $ List [a] el
 -- combining two 'Interval's such that only the portions of the 'Interval's that do not interlap are
 -- included.
 intervalExclusion :: (Ord c, Enum c, InfBound c) => Interval c -> Interval c -> Set c
-intervalExclusion a b = Numeric.Interval.Infinite.union (intervalDelete a b) (intervalDelete b a)
+intervalExclusion a b = Dao.Interval.union (intervalDelete a b) (intervalDelete b a)
 
 -- | Evaluates to the set of all elements not selected by the given 'Interval'.
 intervalInvert :: (Ord c, Enum c, InfBound c) => Interval c -> Set c
-intervalInvert seg = (\o -> _set $ if Prelude.null o then EmptySet else Set_ $ List o) $
+intervalInvert seg = (\o -> if Prelude.null o then EmptySet else Set o) $
   _canonicalize =<< case seg of
     Single   loA   -> case loA of
       NegInf   -> [] -- [Single PosInf]
@@ -567,12 +541,6 @@ intervalNub ax = loop (sort ax) >>= canonicalInterval where
 
 ----------------------------------------------------------------------------------------------------
 
-_innerProduct
-  :: (Ord c, Enum c, InfBound c)
-  => (Interval c -> Interval c -> Set_ List c) 
-  -> [Interval c] -> [Interval c] -> Set_ List c
-_innerProduct reduce a b = _normalize $ Set_ $ List $ reduce <$> a <*> b >>= _toList
-
 -- | This function takes a multiplication function, usually 'intervalIntersect' or 'intervalDelete'.
 -- It works like polynomial multiplication, with the provided reduction function computing the
 -- product of every pair of 'Interval's, and then the "sum" (actually the 'intervalUnion') of all
@@ -581,18 +549,18 @@ innerProduct
   :: (Ord c, Enum c, InfBound c)
   => (Interval c -> Interval c -> Set c)
   -> [Interval c] -> [Interval c] -> Set c
-innerProduct reduce a b = _set $ _innerProduct (\a -> _listSet . _unwrapSet . reduce a) a b
+innerProduct reduce a b = fromList $ reduce <$> a <*> b >>= toList
 
 -- This equation assumes list arguments passed to it are already sorted list. This alrorithm works
 -- in O(log (n^2)) time. Pass two functions, a function for combining intersecting items, and a
 -- function for converting non-intersecting items in the list of @a@ to the list of @b@.
 _exclusive
   :: (Ord a, InfBound a, Enum a)
-  => (Interval a -> Interval a -> Set_ List a) -> [Interval a] -> [Interval a] -> [Interval a]
+  => (Interval a -> Interval a -> Set a) -> [Interval a] -> [Interval a] -> [Interval a]
 _exclusive delete ax bx = ax >>= loop False bx where
   loop hitOne bx a = case bx of
     []   -> if hitOne then [] else [a]
-    b:bx -> let result = _toList (delete a b) in
+    b:bx -> let result = toList (delete a b) in
       if areIntersecting a b
       then result >>= loop False bx
       else if hitOne then [] else loop False bx a
@@ -611,102 +579,56 @@ _exclusive delete ax bx = ax >>= loop False bx where
 
 ----------------------------------------------------------------------------------------------------
 
-newtype Set c = Set { _unwrapSet :: Set_ Vec.Vector c }
-  deriving (Eq, Ord, Typeable)
-
-instance (Eq c, Ord c, Enum c, Show c, InfBound c) => Show (Set c) where { show (Set s) = show $ _listSet s; }
-
-instance (Eq c, Ord c, Enum c, Read c, InfBound c) => Read (Set c) where
-  readsPrec p = liftM (first _set) . readsPrec p
-
-instance (Ord c, Enum c, InfBound c) => Monoid (Sum (Set c)) where
-  mempty  = Sum $ Set EmptySet
-  mappend (Sum a) (Sum b) = Sum $ Numeric.Interval.Infinite.union a b
-
-instance (Ord c, Enum c, InfBound c) => Monoid (Product (Set c)) where
-  mempty  = Product $ Set EmptySet
-  mappend (Product a) (Product b) = Product $ Numeric.Interval.Infinite.union a b
-
-instance NFData a => NFData (Set a) where { rnf (Set s) = deepseq s (); }
-
--- | 'Set' is not a functor, but you can map over values as long as the type of values you map to satisfy
--- the class constraints 'Prelude.Eq', 'Prelude.Ord', 'Prelude.Enum', and 'InfBound'
-map :: (Eq b, Ord b, Enum b, InfBound b) => (a -> b) -> Set a -> Set b
-map f (Set o) = _set $ _normalize $ fmap f $ _listSet o
-
-----------------------------------------------------------------------------------------------------
-
--- Not exported
-data Set_ vec c
+data Set c
   = EmptySet    
   | InfiniteSet
-  | InverseSet (Set_ vec c)
-  | Set_       (vec (Interval c))
+  | InverseSet (Set c)
+  | Set        [Interval c]
   deriving Typeable
 
--- Not exported
-newtype List c = List { _unwrapList :: [c] } deriving (Eq, Ord)
-instance Functor List where { fmap f (List o) = List $ fmap f o; }
-
-_set :: Set_ List c -> Set c
-_set o = case o of
-  EmptySet      -> Set EmptySet
-  InfiniteSet   -> Set InfiniteSet
-  InverseSet s  -> _set s
-  Set_ (List s) -> Set $ Set_ $ Vec.fromList s
-
-_vecSet :: Set_ List c -> Set_ Vec.Vector c
-_vecSet o = case o of
-  EmptySet      -> EmptySet
-  InfiniteSet   -> InfiniteSet
-  InverseSet s  -> _vecSet s
-  Set_ (List s) -> Set_ $ Vec.fromList s
-
-_listSet :: Set_ Vec.Vector c -> Set_ List c
-_listSet o = case o of
-  EmptySet      -> EmptySet
-  InfiniteSet   -> InfiniteSet
-  InverseSet s  -> _listSet s
-  Set_       s  -> Set_ $ List $ Vec.toList s
-
-instance Functor vec => Functor (Set_ vec) where
+instance Functor Set where
   fmap f o = case o of
     EmptySet     -> EmptySet
     InfiniteSet  -> InfiniteSet
-    InverseSet o -> InverseSet $ fmap f o
-    Set_       o -> Set_ $ fmap (fmap f) o
+    InverseSet o -> InverseSet (fmap f o)
+    Set        o -> Set (fmap (fmap f) o)
 
-instance (Eq c, Ord c, Enum c, InfBound c) => Eq (Set_ List c) where
+instance (Eq c, Ord c, Enum c, InfBound c) => Eq (Set c) where
   a == b = case a of
     EmptySet     -> case b of
-      EmptySet       -> True
-      Set_ (List []) -> True
-      _              -> False
+      EmptySet      -> True
+      Set        [] -> True
+      _             -> False
     InfiniteSet  -> case b of
-      InfiniteSet                 -> True
-      Set_ (List [wholeInterval]) -> True
-      _                           -> False
+      InfiniteSet      -> True
+      Set [s] | s==wholeInterval -> True
+      _                -> False
     InverseSet a -> case b of
       InverseSet b -> a==b
       _            -> _invert a == b
-    Set_       a -> case b of
-      Set_       b -> a==b
+    Set        a -> case b of
+      Set        b -> a==b
       _            -> False
 
-instance (Eq c, Ord c, Enum c, InfBound c) => Eq (Set_ Vec.Vector c) where
-  a == b = _listSet a == _listSet b
+instance (Ord c, Enum c, InfBound c) => Ord (Set c) where
+  compare a b = compare (cardinality a) (cardinality b)
 
-instance (Ord c, Enum c, InfBound c) => Ord (Set_ Vec.Vector c) where
-  compare a b = compare (_cardinality $ _listSet a) (_cardinality $ _listSet b)
+instance (Ord c, Enum c, InfBound c) => Monoid (Sum (Set c)) where
+  mempty  = Sum EmptySet
+  mappend (Sum a) (Sum b) = Sum $ Dao.Interval.union a b
 
-instance (Eq c, Ord c, Enum c, Show c, InfBound c) => Show (Set_ List c) where
+instance (Ord c, Enum c, InfBound c) => Monoid (Product (Set c)) where
+  mempty  = Product EmptySet
+  mappend (Product a) (Product b) = Product $ Dao.Interval.union a b
+
+instance (Eq c, Ord c, Enum c, Show c, InfBound c) => Show (Set c) where
   show s = case s of
-    EmptySet      -> "empty"
-    InfiniteSet   -> "whole"
-    InverseSet s  -> "invert ("++_paren s++")"
-    Set_ (List s) -> "fromList "++show s
+    EmptySet     -> "empty"
+    InfiniteSet  -> "whole"
+    InverseSet s -> "invert ("++_paren s++")"
+    Set        s -> "fromList "++show s
 
-instance (Eq c, Ord c, Enum c, Read c, InfBound c) => Read (Set_ List c) where
+instance (Eq c, Ord c, Enum c, Read c, InfBound c) => Read (Set c) where
   readsPrec p str = do
     let sp       = dropWhile isSpace
     let next :: Read o => ReadS o
@@ -719,41 +641,30 @@ instance (Eq c, Ord c, Enum c, Read c, InfBound c) => Read (Set_ List c) where
             ')':str -> return (InverseSet s, str)
             _       -> error "expecting close-paren for parameter to 'invert'"
         str     -> next str >>= \ (s, str) -> return (InverseSet s, str)
-      ("fromList", str) -> next str >>= \ (s, str) -> return (_normalize $ Set_ $ List s, str)
+      ("fromList", str) -> next str >>= \ (s, str) -> return (fromList s, str)
       _                 -> []
 
-instance NFData a => NFData (Set_ Vec.Vector a) where
-  rnf  EmptySet      = ()
-  rnf  InfiniteSet   = ()
-  rnf (Set_       a) = deepseq a ()
+instance NFData a => NFData (Set a) where
+  rnf EmptySet       = ()
+  rnf InfiniteSet    = ()
+  rnf (Set a)        = deepseq a ()
   rnf (InverseSet a) = deepseq a ()
 
 empty :: Set c
-empty = Set EmptySet
+empty = EmptySet
 
 whole :: Set c
-whole = Set InfiniteSet
+whole = InfiniteSet
 
 -- Creates a list from segments, but does not clean it with 'intervalNub'
-_fromList :: (Ord c, Enum c, InfBound c) => [Interval c] -> Set_ List c
+_fromList :: (Ord c, Enum c, InfBound c) => [Interval c] -> Set c
 _fromList a
   | Data.List.null a   = EmptySet
   | a==[wholeInterval] = InfiniteSet
-  | otherwise          = Set_ $ List a
-
-_normalize :: (Eq c, Ord c, Enum c, InfBound c) => Set_ List c -> Set_ List c
-_normalize o = case o of
-  Set_ (List [])                     -> EmptySet
-  Set_ (List [o]) | o==wholeInterval -> InfiniteSet
-  Set_ (List o)                      -> Set_ (List $ intervalNub o)
-  InverseSet  EmptySet               -> InfiniteSet
-  InverseSet  InfiniteSet            -> EmptySet
-  InverseSet (InverseSet o)          -> _normalize o
-  InverseSet{}                       -> _invert o
-  _                                  -> o
+  | otherwise          = Set a
 
 fromList :: (Ord c, Enum c, InfBound c) => [Interval c] -> Set c
-fromList a = if Data.List.null a then Set EmptySet else _set $ _fromList (intervalNub a)
+fromList a = if Data.List.null a then EmptySet else _fromList (intervalNub a)
 
 fromPairs :: (Ord c, Enum c, InfBound c) => [(c, c)] -> Set c
 fromPairs = fromList . fmap (uncurry interval)
@@ -762,20 +673,17 @@ fromPoints :: (Ord c, Enum c, InfBound c) => [c] -> Set c
 fromPoints = fromList . fmap point
 
 range :: (Ord c, Enum c, InfBound c) => c -> c -> Set c
-range a b = Set $ Set_ $ Vec.singleton $ interval a b
+range a b = Set [interval a b]
 
 singleton :: (Ord c, Enum c, InfBound c) => c -> Set c
-singleton a = Set $ Set_ $ Vec.singleton $ point a
-
-_toList :: (Ord c, Enum c, InfBound c) => Set_ List c -> [Interval c]
-_toList s = case s of
-  EmptySet      -> []
-  InfiniteSet   -> [wholeInterval]
-  InverseSet s  -> _toList $ _invert s
-  Set_ (List s) -> s
+singleton a = Set [point a]
 
 toList :: (Ord c, Enum c, InfBound c) => Set c -> [Interval c]
-toList (Set s) = _toList $ _listSet s
+toList s = case s of
+  EmptySet     -> []
+  InfiniteSet  -> [wholeInterval]
+  InverseSet s -> toList (_invert s)
+  Set        s -> s
 
 elems :: (Ord c, Enum c, Bounded c, InfBound c) => Set c -> [c]
 elems = concatMap enumBoundedPair . toList
@@ -788,32 +696,27 @@ intSize = sum . fmap intervalIntSize . toList
 enumSize :: (Ord c, Enum c, Bounded c, InfBound c) => Set c -> Int
 enumSize = sum . fmap intervalEnumSize . toList
 
-_cardinality :: (Ord c, Enum c, InfBound c) => Set_ List c -> Inf Integer
-_cardinality = fmap getSum . mconcat . fmap (fmap Sum . enumLength) . _toList
-
 -- | Evaluate a possibly infinite 'Prelude.Integer' value counting the number of elements in the
 -- set.
 cardinality :: (Ord c, Enum c, InfBound c) => Set c -> Inf Integer
-cardinality (Set s) = _cardinality (_listSet s)
-
-_member :: (Ord c, InfBound c) => Set_ List c -> c -> Bool
-_member s b = case s of
-  EmptySet      -> False
-  InfiniteSet   -> True
-  InverseSet s  -> not (_member s b)
-  Set_ (List s) -> any (`intervalMember` b) s
+cardinality = fmap getSum . mconcat . fmap (fmap Sum . enumLength) . toList
 
 member :: (Ord c, InfBound c) => Set c -> c -> Bool
-member (Set s) b = _member (_listSet s) b
+member s b = case s of
+  EmptySet     -> False
+  InfiniteSet  -> True
+  InverseSet s -> not (member s b)
+  Set       [] -> False
+  Set        s -> any (`intervalMember` b) s
 
 -- | 'Prelude.True' if the 'Set' is null.
 null :: (Ord c, Enum c, InfBound c) => Set c -> Bool
-null (Set s) = case s of
-  EmptySet            -> True
-  InfiniteSet         -> False
-  InverseSet        s -> isWhole (Set s)
-  Set_ s | Vec.null s -> True
-  Set_              _ -> False
+null s = case s of
+  EmptySet     -> True
+  InfiniteSet  -> False
+  InverseSet s -> isWhole s
+  Set       [] -> True
+  Set        _ -> False
 
 -- | 'Prelude.True' if the 'Set' spans the 'whole' interval.
 isWhole :: (Ord c, Enum c, InfBound c) => Set c -> Bool
@@ -821,33 +724,28 @@ isWhole s = case toList s of
   [Interval NegInf PosInf] -> True
   _                        -> False
 
-_isSingleton :: (Ord c, Enum c, InfBound c) => Set_ List c -> Maybe c
-_isSingleton s = case s of
-  InverseSet s  -> _isSingleton (_invert s)
-  Set_ (List s) -> case s of { [Single c] -> toFinite c; _ -> mzero; }
-  _             -> mzero
-
 isSingleton :: (Ord c, Enum c, InfBound c) => Set c -> Maybe c
-isSingleton (Set s) = _isSingleton $ _listSet s
+isSingleton s = case s of
+  InverseSet   s -> isSingleton (_invert s)
+  Set [Single c] -> toFinite c
+  _              -> mzero
 
 invert :: (Ord c, Enum c, InfBound c) => Set c -> Set c
-invert (Set s) = Set $ case s of
+invert s = case s of
   EmptySet     -> InfiniteSet
   InfiniteSet  -> EmptySet    
   InverseSet s -> s
-  Set_       s -> InverseSet $ Set_ s
+  Set        s -> InverseSet (Set s)
 
 -- Compute the set inversion, rather than just marking it as inverted. Only used internally.
-_invert :: (Ord c, Enum c, InfBound c) => Set_ List c -> Set_ List c
+_invert :: (Ord c, Enum c, InfBound c) => Set c -> Set c
 _invert s = case s of
-  EmptySet      -> InfiniteSet
-  InfiniteSet   -> EmptySet    
-  InverseSet s  -> s
-  Set_ (List s) -> case s of
-    []                     -> InfiniteSet
-    [s] | s==wholeInterval -> EmptySet    
-    s                      -> _fromList $ loop NegInf s >>= _canonicalize
-  where
+  EmptySet     -> InfiniteSet
+  InfiniteSet  -> EmptySet    
+  InverseSet s -> s
+  Set      []  -> InfiniteSet
+  Set     [s] | s==wholeInterval -> EmptySet    
+  Set       s  -> _fromList (loop NegInf s >>= _canonicalize) where
     loop mark s = case s of
       []                   -> [_mkSeg (stepUp mark) PosInf]
       [Interval a PosInf]   -> [_mkSeg (stepUp mark) (stepDown a)]
@@ -855,72 +753,53 @@ _invert s = case s of
       Interval a      b : s -> _mkSeg (stepUp mark) (stepDown a) : loop b s
       Single  a        : s -> _mkSeg (stepUp mark) (stepDown a) : loop a s
 
--- | Exclusive union, similar to the binary exclusive-OR operator, returns the union of @a@ and @b@
--- excluding all 'Interval's where @a@ and @b@ 'intersect'. This function is equal to
---
--- @
--- (a `'union'` b) `'delete'` (a `'intersect'` b)
--- @
 exclusive :: (Ord c, Enum c, InfBound c) => Set c -> Set c -> Set c
-exclusive (Set a') (Set b') =
-  let a = _listSet a'
-      b = _listSet b'
-  in _set $ _delete (_union a b) (_intersect a b)
-
-_union :: (Ord c, Enum c, InfBound c) => Set_ List c -> Set_ List c -> Set_ List c
-_union a b = case a of
-  EmptySet      -> b
-  InfiniteSet   -> InfiniteSet
-  InverseSet a  -> _union (_invert a) b
-  Set_ (List a) -> case a of
-    [] -> b
-    ax -> case b of
-      EmptySet       -> Set_ $ List a
-      InfiniteSet    -> InfiniteSet
-      InverseSet  b  -> _union (Set_ $ List a) (_invert b)
-      Set_ (List []) -> Set_ $ List a
-      Set_ (List  b) -> _innerProduct _intervalUnion a b
+exclusive a b = Dao.Interval.delete (Dao.Interval.union a b) (Dao.Interval.intersect a b)
 
 union :: (Ord c, Enum c, InfBound c) => Set c -> Set c -> Set c
-union (Set a) (Set b) = _set $ _union (_listSet a) (_listSet b)
+union a b = case a of
+  EmptySet     -> b
+  InfiniteSet  -> InfiniteSet
+  InverseSet a -> Dao.Interval.union (_invert a) b
+  Set       [] -> b
+  Set        a -> case b of
+    EmptySet     -> Set a
+    InfiniteSet  -> InfiniteSet
+    InverseSet b -> Dao.Interval.union (Set a) (_invert b)
+    Set       [] -> Set a
+    Set        b -> innerProduct intervalUnion a b
 
 unions :: (Ord c, Enum c, InfBound c) => [Set c] -> Set c
-unions = _set . foldl _union EmptySet . fmap (_listSet . _unwrapSet)
-
-_intersect :: (Ord c, Enum c, InfBound c) => Set_ List c -> Set_ List c -> Set_ List c
-_intersect a b = case a of
-  EmptySet       -> EmptySet    
-  InfiniteSet    -> b
-  InverseSet a   -> _intersect (_invert a) b
-  Set_ (List []) -> EmptySet    
-  Set_ (List a)  -> case b of
-    EmptySet       -> EmptySet    
-    InfiniteSet    -> Set_ (List a)
-    InverseSet b   -> _intersect (Set_ $ List a) (_invert b)
-    Set_ (List []) -> EmptySet    
-    Set_ (List  b) -> _innerProduct _intervalIntersect a b
+unions = foldl Dao.Interval.union Dao.Interval.empty
 
 intersect :: (Ord c, Enum c, InfBound c) => Set c -> Set c -> Set c
-intersect (Set a) (Set b) = _set $ _intersect (_listSet a) (_listSet b)
+intersect a b = case a of
+  EmptySet     -> EmptySet    
+  InfiniteSet  -> b
+  InverseSet a -> Dao.Interval.intersect (_invert a) b
+  Set       [] -> EmptySet    
+  Set        a -> case b of
+    EmptySet     -> EmptySet    
+    InfiniteSet  -> Set a
+    InverseSet b -> Dao.Interval.intersect (Set a) (_invert b)
+    Set       [] -> EmptySet    
+    Set        b -> innerProduct intervalIntersect a b
 
 intersections :: (Ord c, Enum c, InfBound c) => [Set c] -> Set c
-intersections = _set . foldl _intersect (_listSet $ _unwrapSet whole) . fmap (_listSet . _unwrapSet)
-
-_delete :: (Ord c, Enum c, InfBound c) => Set_ List c -> Set_ List c -> Set_ List c
-_delete a b = case b of
-  EmptySet     -> a
-  InfiniteSet  -> EmptySet    
-  InverseSet b -> _delete a (_invert b)
-  Set_ (List []) -> a
-  Set_ (List b ) -> case a of
-    EmptySet       -> EmptySet    
-    InfiniteSet    -> _invert $ Set_ $ List b
-    InverseSet a   -> _delete (_invert a) (Set_ $ List b)
-    Set_ (List []) -> EmptySet    
-    Set_ (List a ) -> _fromList $ _exclusive _intervalDelete a b
-      -- Here we call 'fromList' instead of '_fromList' because an additional 'intervalNub'
-      -- operation is required.
+intersections = foldl Dao.Interval.intersect whole
 
 delete :: (Ord c, Enum c, InfBound c) => Set c -> Set c -> Set c
-delete (Set a) (Set b) = _set $ _delete (_listSet a) (_listSet b)
+delete a b = case b of
+  EmptySet     -> a
+  InfiniteSet  -> EmptySet    
+  InverseSet b -> Dao.Interval.delete a (_invert b)
+  Set       [] -> a
+  Set        b -> case a of
+    EmptySet     -> EmptySet    
+    InfiniteSet  -> _invert (Set b)
+    InverseSet a -> Dao.Interval.delete (_invert a) (Set b)
+    Set       [] -> EmptySet    
+    Set        a -> fromList (_exclusive intervalDelete a b)
+      -- Here we call 'fromList' instead of '_fromList' because an additional 'intervalNub'
+      -- operation is required.
 
