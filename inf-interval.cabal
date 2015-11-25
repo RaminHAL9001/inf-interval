@@ -22,7 +22,7 @@ library
   exposed-modules:     
     Numeric.Interval.Infinite
 
-  extensions:
+  default-extensions:
     MultiParamTypeClasses
     FlexibleInstances
     FlexibleContexts
@@ -38,3 +38,33 @@ library
 
   hs-source-dirs:      src
   default-language:    Haskell2010
+
+Test-Suite Interval
+
+  type:           exitcode-stdio-1.0
+  main-is:        Interval.hs
+  hs-source-dirs: src tests
+
+  build-depends:
+    array      >=0.5.0.0  && <=0.5.0.0,
+    deepseq    >=1.3.0.0  && <=1.3.0.2,
+    base       >=4.7      && <4.8,
+    vector     >=0.10.9.1 && <=0.10.12.3,
+    text       >=1.2.0.6  && <=1.2.0.6,
+    QuickCheck >=2.6      && <=2.8.1
+
+  GHC-options: -threaded -Wall
+    -fno-warn-name-shadowing
+    -fno-warn-unused-do-bind
+    -with-rtsopts=-M4G
+
+  default-extensions:
+    MultiParamTypeClasses
+    FlexibleInstances
+    FlexibleContexts
+    TypeSynonymInstances
+    DeriveDataTypeable
+    RankNTypes
+
+  default-language: Haskell2010
+
