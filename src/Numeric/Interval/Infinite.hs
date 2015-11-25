@@ -50,10 +50,8 @@ module Numeric.Interval.Infinite
 
 import           Data.Array.IArray (Array, Ix, bounds)
 import           Data.Char
-import           Data.Function (fix)
 import           Data.Monoid
 import           Data.List
-import           Data.Ratio
 import           Data.Typeable
 import qualified Data.Vector as Vec
 
@@ -683,9 +681,9 @@ instance (Eq c, Ord c, Enum c, InfBound c) => Eq (Set_ List c) where
       Set_ (List []) -> True
       _              -> False
     InfiniteSet  -> case b of
-      InfiniteSet                 -> True
-      Set_ (List [wholeInterval]) -> True
-      _                           -> False
+      InfiniteSet                        -> True
+      Set_ (List [o]) | o==wholeInterval -> True
+      _                                  -> False
     InverseSet a -> case b of
       InverseSet b -> a==b
       _            -> _invert a == b
@@ -874,7 +872,7 @@ _union a b = case a of
   InverseSet a  -> _union (_invert a) b
   Set_ (List a) -> case a of
     [] -> b
-    ax -> case b of
+    a  -> case b of
       EmptySet       -> Set_ $ List a
       InfiniteSet    -> InfiniteSet
       InverseSet  b  -> _union (Set_ $ List a) (_invert b)
