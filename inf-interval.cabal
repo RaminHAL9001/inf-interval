@@ -1,6 +1,6 @@
-name:                inf-interval
-version:             0.1.0.0
-synopsis:            Non-contiguous interval data types with potentially infinite ranges. 
+name:         inf-interval
+version:      0.1.0.1
+synopsis:     Non-contiguous interval data types with potentially infinite ranges. 
 description:
     Non-contiguous interval data types with potentially infinite ranges.
 
