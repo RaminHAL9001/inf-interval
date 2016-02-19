@@ -1,6 +1,6 @@
-module Dao.Test.Interval where
+module Main where
 
---import           Dao.Check
+import           Check
 import qualified Numeric.Interval.Infinite as Iv
 
 import           Control.Applicative

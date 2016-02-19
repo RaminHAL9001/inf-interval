@@ -23,7 +23,7 @@
 -- The design of this module is to facilitate running tests in GHCi with functions like 'runTest',
 -- 'testUntilFail', and 'testAll', but also provides the 'testMultiThread' function for running
 -- several related tests all in one run without the need for interaction.
-module Dao.Check where
+module Check where
 
 import           Dao.Concurrent
 
